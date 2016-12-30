@@ -1,5 +1,5 @@
 [package]
-name = "underhanded"
+name = "simple_payment_service"
 version = "0.1.0"
 authors = ["serejkaaa512"]
 
@@ -14,8 +14,6 @@ hyper = "*"
 rand = "*"
 lazy_static = "*"
 
-nickel = { path = "nickel/nickel.rs" }
 
-
-# [dependencies.nickel]
-# version = "*"
+[dependencies.nickel]
+version = "*"

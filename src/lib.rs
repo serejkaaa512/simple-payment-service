@@ -7,4 +7,6 @@ extern crate rustc_serialize;
 extern crate hyper;
 extern crate rand;
 
+#[macro_use]
+pub mod macros;
 pub mod server;
