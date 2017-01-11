@@ -1,85 +1,16 @@
-use rand;
 use std::io::Write;
 use nickel::status::StatusCode::NotFound;
 use nickel::{Nickel, NickelError, Continue, Halt, Request, Response, MediaType, QueryString,
              ListeningServer, JsonBody, MiddlewareResult, HttpRouter, Action};
-use rustc_serialize::json;
 use std::sync::{Arc, Mutex};
 use std::error::Error as StdError;
-
-#[derive(RustcDecodable, RustcEncodable, Debug, Clone)]
-struct Person {
-    firstname: String,
-    lastname: String,
-}
-
-#[derive(RustcDecodable, RustcEncodable, Debug, Clone)]
-struct Payment {
-    customer: Person,
-    account: String,
-    amount: f64,
-}
-
-#[derive(RustcDecodable, RustcEncodable, Debug, Clone)]
-struct AccountInfo {
-    customer: Person,
-    account: String,
-    amount: f64,
-}
-
-#[derive(Debug)]
-struct Bank {
-    accounts: Vec<AccountInfo>,
-}
-
-impl Bank {
-    fn new() -> Bank {
-        Bank { accounts: vec![] }
-    }
-
-    fn add_customer(&mut self, customer: Person) -> String {
-        let account = rand::random::<i32>().abs().to_string();
-        let amount = 0f64;
-        let acc = AccountInfo {
-            customer: customer,
-            account: account.clone(),
-            amount: amount,
-        };
-        self.accounts.push(acc.clone());
-        json::encode(&acc).unwrap()
-    }
-
-    fn add_payment(&mut self, pay: Payment) -> String {
-        let ac = self.accounts
-            .iter_mut()
-            .find(|ac| {
-                ac.customer.firstname == pay.customer.firstname &&
-                ac.customer.lastname == pay.customer.lastname &&
-                ac.account == pay.account
-            })
-            .unwrap();
-        ac.amount += pay.amount;
-        format!("Payment received. New data: Customer - {} {}. Account - {}. Amount - {}",
-                ac.customer.firstname,
-                ac.customer.lastname,
-                ac.account,
-                ac.amount)
-    }
-
-    fn get_account_info(&mut self, customer: Person) -> String {
-        let ac = self.accounts
-            .iter()
-            .find(|ac| {
-                ac.customer.firstname == customer.firstname &&
-                ac.customer.lastname == customer.lastname
-            })
-            .unwrap();
-        json::encode(&ac).unwrap()
-    }
-}
+use mybank as bank;
+use bank::Service;
 
 
 
+// https://is.gd/lEJ7IP
+// https://gist.github.com/bba00d535d176215608c1c03f6a2c477
 fn custom_404<'a, D>(err: &mut NickelError<D>, _req: &mut Request<D>) -> Action {
     if let Some(ref mut res) = err.stream {
         if res.status() == NotFound {
@@ -87,32 +18,31 @@ fn custom_404<'a, D>(err: &mut NickelError<D>, _req: &mut Request<D>) -> Action 
             return Halt(());
         }
     }
-
     Continue(())
 }
 
 
 
 // curl 'http://localhost:6767/customers' -H 'Content-Type: application/json;charset=UTF-8'  --data-binary $'{ "firstname": "John","lastname": "Lock" }'
-fn post_customers<'mw>(req: &mut Request<Arc<Mutex<Bank>>>,
-                       mut res: Response<'mw, Arc<Mutex<Bank>>>)
-                       -> MiddlewareResult<'mw, Arc<Mutex<Bank>>> {
+fn post_customers<'mw>(req: &mut Request<Arc<Mutex<bank::Bank>>>,
+                       mut res: Response<'mw, Arc<Mutex<bank::Bank>>>)
+                       -> MiddlewareResult<'mw, Arc<Mutex<bank::Bank>>> {
     let mut my_bank = req.server_data().lock().unwrap();
-    let customer = req.json_as::<Person>().unwrap();
+    let customer = req.json_as::<bank::Person>().unwrap();
     let output = my_bank.add_customer(customer);
     res.set(MediaType::Json);
     res.send(output)
 }
 
 // http://localhost:6767/balance?firstname=John&lastname=Lock
-fn get_balance<'mw>(req: &mut Request<Arc<Mutex<Bank>>>,
-                    mut res: Response<'mw, Arc<Mutex<Bank>>>)
-                    -> MiddlewareResult<'mw, Arc<Mutex<Bank>>> {
+fn get_balance<'mw>(req: &mut Request<Arc<Mutex<bank::Bank>>>,
+                    mut res: Response<'mw, Arc<Mutex<bank::Bank>>>)
+                    -> MiddlewareResult<'mw, Arc<Mutex<bank::Bank>>> {
     let mut my_bank = req.server_data().lock().unwrap();
     let query = req.query();
     let firstname = query.get("firstname").unwrap();
     let lastname = query.get("lastname").unwrap();
-    let customer = Person {
+    let customer = bank::Person {
         firstname: firstname.clone().to_string(),
         lastname: lastname.clone().to_string(),
     };
@@ -122,21 +52,22 @@ fn get_balance<'mw>(req: &mut Request<Arc<Mutex<Bank>>>,
 }
 
 // curl 'http://localhost:6767/pay' -H 'Content-Type: application/json;charset=UTF-8'  --data-binary $'{ "person": { "firstname": "John","lastname": "Lock" }, "account": "1321321321312", "amount": "80"}'
-fn post_pay<'mw>(req: &mut Request<Arc<Mutex<Bank>>>,
-                 res: Response<'mw, Arc<Mutex<Bank>>>)
-                 -> MiddlewareResult<'mw, Arc<Mutex<Bank>>> {
-    let payment = req.json_as::<Payment>().unwrap();
+fn post_pay<'mw>(req: &mut Request<Arc<Mutex<bank::Bank>>>,
+                 mut res: Response<'mw, Arc<Mutex<bank::Bank>>>)
+                 -> MiddlewareResult<'mw, Arc<Mutex<bank::Bank>>> {
+    let payment = req.json_as::<bank::Payment>().unwrap();
     let mut my_bank = req.server_data().lock().unwrap();
     let output = my_bank.add_payment(payment);
+    res.set(MediaType::Json);
     res.send(output)
 }
 
 
 
 pub fn create_server(address: &str) -> Result<ListeningServer, Box<StdError>> {
-    let my_bank = Arc::new(Mutex::new(Bank::new()));
-    let custom_handler: fn(&mut NickelError<Arc<Mutex<Bank>>>,
-                           &mut Request<Arc<Mutex<Bank>>>)
+    let my_bank = Arc::new(Mutex::new(bank::Bank::new()));
+    let custom_handler: fn(&mut NickelError<Arc<Mutex<bank::Bank>>>,
+                           &mut Request<Arc<Mutex<bank::Bank>>>)
                            -> Action = custom_404;
     let mut server = Nickel::with_data(my_bank);
     server.get("/balance", get_balance)
@@ -158,7 +89,6 @@ mod tests {
     use nickel::status::StatusCode;
     use rustc_serialize::json::Json;
 
-
     #[ignore]
     #[test]
     fn post_customer() {
@@ -171,8 +101,8 @@ mod tests {
         assert_eq!(response.status, StatusCode::Ok);
         assert_eq!(response.headers.get::<header::ContentType>(),
                    Some(&header::ContentType::json()));
-        assert_eq!(json["person"]["firstname"].as_string(), Some("John"));
-        assert_eq!(json["person"]["lastname"].as_string(), Some("Lock"));
+        assert_eq!(json["customer"]["firstname"].as_string(), Some("John"));
+        assert_eq!(json["customer"]["lastname"].as_string(), Some("Lock"));
     }
 
     #[ignore]
@@ -211,17 +141,16 @@ mod tests {
 
         // simple man pay
         response = post("/pay", &*json_send);
-        let answer = format!("{}{}{}",
-                             "Payment received. New data: Customer - John Lock. Account - ",
-                             &*account,
-                             ". Amount - 80");
 
+        let json = Json::from_str(&response.body()).unwrap();
         assert_eq!(response.status, StatusCode::Ok);
-
-        assert_eq!(response.body(), answer);
+        assert_eq!(response.headers.get::<header::ContentType>(),
+                   Some(&header::ContentType::json()));
+        assert_eq!(json["customer"]["firstname"].as_string(), Some("John"));
+        assert_eq!(json["customer"]["lastname"].as_string(), Some("Lock"));
+        assert_eq!(json["amount"].as_f64(), Some(80f64));
 
     }
-
 
 
     #[test]
